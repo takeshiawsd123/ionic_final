@@ -1,0 +1,432 @@
+<ion-header [translucent]="true">
+  @if (selectedPlaylist) {
+    <ion-toolbar>
+      <ion-buttons slot="start">
+        <ion-button (click)="closePlaylist()" title="Back">
+          <ion-icon name="arrow-back"></ion-icon>
+        </ion-button>
+      </ion-buttons>
+    </ion-toolbar>
+  } @else {
+    <ion-toolbar>
+      <ion-title>Music Player</ion-title>
+      <ion-buttons slot="end">
+        <ion-button (click)="triggerFilePicker()" title="Add audio files">
+          <ion-icon name="add"></ion-icon>
+        </ion-button>
+        @if (canScanFolder) {
+          <ion-button (click)="scanFolder()" title="Scan / rescan music">
+            <ion-icon name="folder-open"></ion-icon>
+          </ion-button>
+        }
+      </ion-buttons>
+    </ion-toolbar>
+    <ion-toolbar>
+      <ion-segment [(ngModel)]="segment" (ionChange)="onSegmentChange($event)">
+        <ion-segment-button value="library">
+          <ion-label>Library</ion-label>
+          <ion-icon name="musical-notes"></ion-icon>
+        </ion-segment-button>
+        <ion-segment-button value="playlists">
+          <ion-label>Playlists</ion-label>
+          <ion-icon name="albums"></ion-icon>
+        </ion-segment-button>
+        <ion-segment-button value="player">
+          <ion-label>Now Playing</ion-label>
+          <ion-icon name="disc"></ion-icon>
+        </ion-segment-button>
+        <ion-segment-button value="queue">
+          <ion-label>Queue</ion-label>
+          <ion-icon name="list"></ion-icon>
+        </ion-segment-button>
+      </ion-segment>
+    </ion-toolbar>
+  }
+</ion-header>
+
+<ion-content [fullscreen]="true" (dragover)="onDragOver($event)" (drop)="onDrop($event)">
+  @if (!selectedPlaylist) {
+    <ion-header collapse="condense">
+      <ion-toolbar>
+        <ion-title size="large">Music Player</ion-title>
+      </ion-toolbar>
+    </ion-header>
+  }
+
+  <input #fileInput type="file" accept=".mp3,audio/mpeg" multiple hidden (change)="onFilesSelected($event)" />
+
+  @if (scanning) {
+    <div [hidden]="selectedPlaylist" class="scanning">
+      <ion-spinner name="crescent"></ion-spinner>
+      <span>Scanning for MP3 files...</span>
+    </div>
+  }
+
+  @if (needsFolderPermission && canScanFolder) {
+    <div [hidden]="selectedPlaylist" class="scan-prompt">
+      <p>Auto-scan needs access to your music files. You can also choose any music folder.</p>
+      <ion-button size="small" (click)="rescanFolder()">
+        <ion-icon slot="start" name="folder-open"></ion-icon>
+        Enable / Rescan
+      </ion-button>
+    </div>
+  }
+
+  @if (segment === 'library') {
+    <div [hidden]="selectedPlaylist" class="library">
+      <ion-searchbar [(ngModel)]="searchQuery" (ionInput)="onSearchChange()" placeholder="Search songs, artists, albums"></ion-searchbar>
+
+      @if (tracks.length === 0 && !scanning) {
+        <div class="empty">
+          <ion-icon name="musical-notes" size="large"></ion-icon>
+          <h2>No music yet</h2>
+          <p>Add audio files or scan a folder to get started.</p>
+          <ion-button (click)="triggerFilePicker()">
+            <ion-icon slot="start" name="add"></ion-icon>
+            Add Audio Files
+          </ion-button>
+          @if (canScanFolder) {
+            <ion-button (click)="scanFolder()" fill="outline">
+              <ion-icon slot="start" name="folder-open"></ion-icon>
+              Scan / Rescan Music
+            </ion-button>
+          }
+        </div>
+      }
+
+      <div class="library-list" [hidden]="filteredTracks.length === 0">
+        @for (group of groupedTracks; track group.letter) {
+          <div class="letter-group">
+            <div class="letter-header" [id]="'letter-' + letterId(group.letter)">{{ group.letter }}</div>
+            <ion-list>
+              @for (t of group.tracks; track t.id) {
+                <ion-item button (click)="playTrack(t)" [class.active]="currentTrack?.id === t.id">
+                  <ion-thumbnail slot="start">
+                    @if (trackArtwork(t)) {
+                      <img [src]="trackArtwork(t)" alt="art" />
+                    } @else {
+                      <div class="art-placeholder">
+                        <ion-icon name="musical-notes"></ion-icon>
+                      </div>
+                    }
+                  </ion-thumbnail>
+                  <ion-label>
+                    <h2>{{ t.title }}</h2>
+                    <p>{{ t.artist }} · {{ t.album }}</p>
+                  </ion-label>
+                  <div slot="end" class="row-actions">
+                    <ion-note color="medium">{{ formatTime(t.duration) }}</ion-note>
+                    <ion-button fill="clear" size="small" (click)="openTrackMenu(t, $event)" title="Song options">
+                      <ion-icon slot="icon-only" name="ellipsis-vertical"></ion-icon>
+                    </ion-button>
+                  </div>
+                </ion-item>
+              }
+            </ion-list>
+          </div>
+        }
+        <div
+          class="alpha-index"
+          aria-label="Alphabetical index"
+          (pointerdown)="onIndexPointerDown($event)"
+          (pointermove)="onIndexPointerMove($event)"
+          (pointerup)="onIndexPointerUp($event)"
+          (pointercancel)="onIndexPointerUp($event)">
+          @for (letter of alphabet; track letter) {
+            <button
+              type="button"
+              class="alpha-letter"
+              [class.active]="activeIndexLetter === letter"
+              [disabled]="!availableLetters.includes(letter)"
+              [attr.data-letter]="letter"
+              (click)="onIndexClick(letter, $event)"
+              [attr.aria-label]="'Jump to ' + letter">{{ letter }}</button>
+          }
+        </div>
+      </div>
+
+      @if (tracks.length > 0 && filteredTracks.length === 0) {
+        <div class="empty">
+          <p>No matches for "{{ searchQuery }}"</p>
+        </div>
+      }
+    </div>
+  }
+
+  <div [hidden]="segment !== 'playlists' || selectedPlaylist" class="playlists">
+    <div class="playlist-toolbar">
+      <ion-button size="small" (click)="newPlaylist()">
+        <ion-icon slot="start" name="add"></ion-icon>
+        New playlist
+      </ion-button>
+      <ion-button size="small" fill="outline" (click)="syncPlaylists()">
+        <ion-icon slot="start" name="refresh"></ion-icon>
+        Sync
+      </ion-button>
+    </div>
+
+    <div [hidden]="!playlistSyncing" class="scanning">
+      <ion-spinner name="crescent"></ion-spinner>
+      <span>Syncing playlists...</span>
+    </div>
+
+    <ion-list [hidden]="playlists.length === 0">
+      @for (p of playlists; track p.id) {
+      <ion-item button (click)="openPlaylist(p)" title="Open playlist">
+        <ion-label>
+          <h2>
+            {{ p.name }}
+            <ion-badge [hidden]="!p.offlineReady" color="success">offline</ion-badge>
+            <ion-badge [hidden]="!p.pending" color="warning">pending</ion-badge>
+          </h2>
+          <p>{{ p.trackIds.length }} songs</p>
+        </ion-label>
+        <ion-button slot="end" fill="clear" (click)="playPlaylist(p); $event.stopPropagation()" title="Play">
+          <ion-icon name="play"></ion-icon>
+        </ion-button>
+        <ion-button slot="end" fill="clear" (click)="downloadPlaylist(p); $event.stopPropagation()" title="Download for offline">
+          <ion-icon name="download"></ion-icon>
+        </ion-button>
+        <ion-button slot="end" fill="clear" (click)="addTracksToPlaylist(p); $event.stopPropagation()" title="Add tracks">
+          <ion-icon name="add"></ion-icon>
+        </ion-button>
+        <ion-button slot="end" fill="clear" color="danger" (click)="deletePlaylist(p); $event.stopPropagation()" title="Delete">
+          <ion-icon name="trash"></ion-icon>
+        </ion-button>
+      </ion-item>
+      }
+    </ion-list>
+
+    <div [hidden]="playlists.length > 0 || playlistSyncing" class="empty">
+      <ion-icon name="albums" size="large"></ion-icon>
+      <h2>No playlists yet</h2>
+      <p>Connect to the REST API or create a playlist.</p>
+    </div>
+  </div>
+
+  <div class="library" [hidden]="!selectedPlaylist">
+    @if (playlistDetailLoading) {
+      <div class="scanning">
+        <ion-spinner name="crescent"></ion-spinner>
+        <span>Loading songs...</span>
+      </div>
+    }
+    @if (selectedPlaylist && !playlistDetailLoading && selectedPlaylistTracks.length === 0) {
+      <div class="empty">
+        <ion-icon name="musical-notes" size="large"></ion-icon>
+        <h2>No songs in this playlist</h2>
+        <p>Download the playlist or connect to the REST API.</p>
+      </div>
+    }
+    <ion-list [hidden]="!selectedPlaylist || playlistDetailLoading || selectedPlaylistTracks.length === 0">
+      @for (t of selectedPlaylistTracks; track t.id) {
+        <ion-item button (click)="playPlaylistTrack(t)" [class.active]="currentTrack?.id === t.id">
+          <ion-thumbnail slot="start">
+            @if (trackArtwork(t)) {
+              <img [src]="trackArtwork(t)" alt="art" />
+            } @else {
+              <div class="art-placeholder">
+                <ion-icon name="musical-notes"></ion-icon>
+              </div>
+            }
+          </ion-thumbnail>
+          <ion-label>
+            <h2>{{ t.title }}</h2>
+            <p>{{ t.artist }} · {{ t.album }}</p>
+          </ion-label>
+          <div slot="end" class="row-actions">
+            <ion-note color="medium">{{ formatTime(t.duration) }}</ion-note>
+            <ion-button fill="clear" size="small" (click)="openTrackMenu(t, $event)" title="Song options">
+              <ion-icon slot="icon-only" name="ellipsis-vertical"></ion-icon>
+            </ion-button>
+          </div>
+        </ion-item>
+      }
+    </ion-list>
+  </div>
+
+  @if (segment === 'player') {
+    <div [hidden]="selectedPlaylist" class="player">
+      @if (!currentTrack) {
+        <div class="empty">
+          <ion-icon name="disc" size="large"></ion-icon>
+          <p>Select a song to play</p>
+        </div>
+      } @else {
+        <div class="now-playing">
+          <div class="artwork">
+            @if (trackArtwork(currentTrack)) {
+              <img [src]="trackArtwork(currentTrack)" alt="album art" />
+            } @else {
+              <div class="art-placeholder big">
+                <ion-icon name="musical-notes"></ion-icon>
+              </div>
+            }
+          </div>
+
+          <h2 class="title">{{ currentTrack.title }}</h2>
+          <p class="artist">{{ currentTrack.artist }}</p>
+          <p class="album">{{ currentTrack.album }}</p>
+
+          <ion-range
+            [min]="0"
+            [max]="progressMax"
+            [step]="0.1"
+            [snaps]="false"
+            [value]="progressValue"
+            (ionKnobMoveStart)="onSeekStart($event)"
+            (ionInput)="onSeekMove($event)"
+            (ionKnobMoveEnd)="onSeekEnd($event)"
+            (ionChange)="onSeekChange($event)"
+            [disabled]="!(duration || currentTrack.duration)"
+            color="primary">
+          </ion-range>
+          <div class="times">
+            <span>{{ formatTime(seeking ? seekValue : currentTime) }}</span>
+            <span>{{ formatTime(duration || currentTrack.duration) }}</span>
+          </div>
+
+          <div class="controls">
+            <ion-button fill="clear" (click)="toggleShuffle()" [color]="shuffle ? 'primary' : 'medium'">
+              <ion-icon name="shuffle"></ion-icon>
+            </ion-button>
+            <ion-button fill="clear" (click)="prev()">
+              <ion-icon name="play-skip-back"></ion-icon>
+            </ion-button>
+            <ion-fab-button size="large" (click)="togglePlay()" color="primary">
+              <ion-icon [name]="isPlaying ? 'pause' : 'play'"></ion-icon>
+            </ion-fab-button>
+            <ion-button fill="clear" (click)="next()">
+              <ion-icon name="play-skip-forward"></ion-icon>
+            </ion-button>
+            <ion-button fill="clear" (click)="cycleRepeat()" [color]="repeat === 'off' ? 'medium' : 'primary'">
+              <ion-icon name="repeat"></ion-icon>
+              @if (repeat === 'one') {
+                <ion-badge color="primary" class="repeat-badge">1</ion-badge>
+              }
+            </ion-button>
+          </div>
+
+          <div class="volume">
+            <ion-icon name="volume-low"></ion-icon>
+            <ion-range [min]="0" [max]="1" [step]="0.01" [value]="volume" (ionChange)="setVolume($event)" color="medium"></ion-range>
+            <ion-icon name="volume-high"></ion-icon>
+          </div>
+        </div>
+      }
+    </div>
+  }
+
+  @if (segment === 'queue') {
+    <div [hidden]="selectedPlaylist" class="queue">
+      @if (queue.length === 0) {
+        <div class="empty">
+          <p>Queue is empty</p>
+        </div>
+      } @else {
+        <ion-list>
+          @for (t of queue; track t.id; let i = $index) {
+            <ion-item [class.active]="i === currentIndex" button (click)="playQueueIndex(i)">
+              <ion-thumbnail slot="start">
+                @if (trackArtwork(t)) {
+                  <img [src]="trackArtwork(t)" alt="art" />
+                } @else {
+                  <div class="art-placeholder">
+                    <ion-icon name="musical-notes"></ion-icon>
+                  </div>
+                }
+              </ion-thumbnail>
+              <ion-label>
+                <h2>{{ t.title }}</h2>
+                <p>{{ t.artist }}</p>
+              </ion-label>
+              <ion-button slot="end" fill="clear" color="danger" (click)="removeFromQueue(i); $event.stopPropagation()">
+                <ion-icon name="close"></ion-icon>
+              </ion-button>
+            </ion-item>
+          }
+        </ion-list>
+      }
+    </div>
+  }
+</ion-content>
+
+@if (currentTrack) {
+  <div class="mini-player" (click)="segment = 'player'">
+    @if (trackArtwork(currentTrack)) {
+      <img [src]="trackArtwork(currentTrack)" alt="art" />
+    } @else {
+      <div class="art-placeholder">
+        <ion-icon name="musical-notes"></ion-icon>
+      </div>
+    }
+    <div class="mini-info">
+      <strong>{{ currentTrack.title }}</strong>
+      <span>{{ currentTrack.artist }}</span>
+    </div>
+    <ion-button fill="clear" (click)="togglePlay(); $event.stopPropagation()">
+      <ion-icon [name]="isPlaying ? 'pause' : 'play'"></ion-icon>
+    </ion-button>
+    <ion-button fill="clear" (click)="next(); $event.stopPropagation()">
+      <ion-icon name="play-skip-forward"></ion-icon>
+    </ion-button>
+  </div>
+}
+
+@if (playlistPickerOpen) {
+  <div class="picker-backdrop" (click)="closePlaylistPicker()">
+    <div class="picker-sheet" (click)="$event.stopPropagation()">
+      <div class="picker-head">
+        <h2>Add to playlist</h2>
+        <ion-button fill="clear" (click)="closePlaylistPicker()">
+          <ion-icon name="close"></ion-icon>
+        </ion-button>
+      </div>
+      @if (pickerTrack) {
+        <div class="picker-track">
+          <ion-thumbnail>
+            @if (trackArtwork(pickerTrack)) {
+              <img [src]="trackArtwork(pickerTrack)" alt="art" />
+            } @else {
+              <div class="art-placeholder">
+                <ion-icon name="musical-notes"></ion-icon>
+              </div>
+            }
+          </ion-thumbnail>
+          <div>
+            <strong>{{ pickerTrack.title }}</strong>
+            <span>{{ pickerTrack.artist }}</span>
+          </div>
+        </div>
+      }
+      <div class="picker-list">
+        @for (p of playlists; track p.id) {
+          <button type="button" class="picker-item" [class.selected]="p.id === pickerPlaylistId" (click)="selectPickerPlaylist(p.id)">
+            <ion-icon name="albums"></ion-icon>
+            <span class="picker-name">{{ p.name }}</span>
+            <span class="picker-count">{{ p.trackIds.length }}</span>
+            @if (p.id === pickerPlaylistId) {
+              <ion-icon name="checkmark"></ion-icon>
+            }
+          </button>
+        }
+        @if (pickerCreating) {
+          <div class="picker-create">
+            <input [(ngModel)]="newPlaylistName" placeholder="Playlist name" (keydown.enter)="createPlaylistFromPicker()" />
+            <button type="button" [disabled]="!newPlaylistName.trim()" (click)="createPlaylistFromPicker()">Create</button>
+          </div>
+          @if (pickerError) {
+            <p class="picker-error">{{ pickerError }}</p>
+          }
+        }
+        <button type="button" class="picker-item new" (click)="pickerCreating = !pickerCreating">
+          <ion-icon [name]="pickerCreating ? 'close' : 'add'"></ion-icon>
+          <span>{{ pickerCreating ? 'Cancel' : 'New playlist' }}</span>
+        </button>
+      </div>
+      <div class="picker-actions">
+        <ion-button expand="block" [disabled]="!pickerPlaylistId" (click)="confirmAddToPlaylist()">Add song</ion-button>
+      </div>
+    </div>
+  </div>
+}
